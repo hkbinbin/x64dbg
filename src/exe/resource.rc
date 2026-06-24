@@ -75,10 +75,10 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "x64dbg"
+            VALUE "FileDescription", "aclcwd"
             VALUE "FileVersion", "0.0.2.5"
-            VALUE "LegalCopyright", "x64dbg.com"
-            VALUE "ProductName", "x64dbg"
+            VALUE "LegalCopyright", ""
+            VALUE "ProductName", "aclcwd"
             VALUE "ProductVersion", "0.0.2.5"
         END
     END

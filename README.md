@@ -1,12 +1,110 @@
-# x64dbg
+# x64dbg (aclcwd fork — anti-anti-debug edition)
 
 <img width="100" src="https://github.com/x64dbg/x64dbg/raw/development/src/bug_black.png"/>
 
-[![Crowdin](https://d322cqt584bo4o.cloudfront.net/x64dbg/localized.svg)](https://translate.x64dbg.com) [![Download x64dbg](https://img.shields.io/sourceforge/dm/x64dbg.svg)](https://sourceforge.net/projects/x64dbg/files/latest/download) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/x64dbg/x64dbg)
+> **Fork notice**: This is a fork of [x64dbg/x64dbg](https://github.com/x64dbg/x64dbg) with built-in anti-anti-debug modifications. The final executable is renamed to **`aclcwd.exe`** so anti-cheat / anti-debug code that scans for `x64dbg.exe` by name no longer matches. All upstream features are preserved — only stealth and auto-hide are added on top.
 
-[![Discord](https://img.shields.io/badge/chat-on%20Discord-green.svg)](https://discord.x64dbg.com) [![Slack](https://img.shields.io/badge/chat-on%20Slack-red.svg)](https://slack.x64dbg.com) [![Gitter](https://img.shields.io/badge/chat-on%20Gitter-lightseagreen.svg)](https://gitter.im/x64dbg/x64dbg) [![Matrix](https://img.shields.io/badge/chat-on%20Matrix-yellowgreen.svg)](https://riot.im/app/#/room/#x64dbg:matrix.org) [![IRC](https://img.shields.io/badge/chat-on%20IRC-purple.svg)](https://web.libera.chat/#x64dbg)
+---
 
-An open-source binary debugger for Windows, aimed at malware analysis and reverse engineering of executables you do not have the source code for. There are many features available and a comprehensive [plugin system](https://plugins.x64dbg.com) to add your own. You can find more information on the [blog](https://x64dbg.com/blog)!
+## Anti-anti-debug additions in this fork
+
+The original x64dbg ships a manual `HideDebugger` (alias `dbh` / `hide`) command that toggles a handful of PEB fields. It's **off by default** and **only covers PEB**. This fork extends that into a full auto-hide pipeline that fires the moment a debuggee process is created or attached.
+
+### 1. New command: `HideDebuggerEx` (aliases `dbhx`, `hideex`)
+
+Runs four layers in sequence:
+
+| # | Layer | What it does | Defeats |
+|---|---|---|---|
+| 1 | **PEB hide** (reused) | Clear `PEB.BeingDebugged`, `PEB.NtGlobalFlag & 0x70`, and the `HEAP_TAIL_CHECKING / HEAP_FREE_CHECKING / HEAP_VALIDATE_PARAMETERS` heap flags — applied to both the native PEB and the WoW64 PEB on x64 hosts. | `IsDebuggerPresent`, `CheckRemoteDebuggerPresent`, heap-flag probes |
+| 2 | **DbgUiRemoteBreakin patch** | Overwrites the first byte of `ntdll!DbgUiRemoteBreakin` with `0xC3` (`ret`). Any remote thread injected via `DebugBreakProcess` returns immediately without raising a breakpoint. | `DebugBreakProcess`-based probes |
+| 3 | **DbgBreakPoint patch** | Overwrites the first byte of `ntdll!DbgBreakPoint` with `0xC3`. Anti-cheat code calling this from a remote thread expecting an `EXCEPTION_BREAKPOINT` in our debug loop now silently no-ops. | Remote `DbgBreakPoint` triggers |
+| 4 | **`NtSetInformationThread(ThreadHideFromDebugger=0x11)`** | Applied to every known debuggee thread via the cached per-thread handle from `ThreadGetList()`. Kernel stops routing that thread's exceptions to the debugger. | Trap-self anti-debug |
+
+Both patches go through `MemPatch`, so the changes are recorded in the **Patches** view and can be reverted with one click.
+
+### 2. Auto-hide on launch / attach
+
+Two new INI keys (default **ON**) drive the pipeline automatically:
+
+```ini
+[Misc]
+AutoHideDebugger=1     ; PEB layer only — light weight
+AutoHideDebuggerEx=1   ; PEB + ntdll patches + ThreadHide  (recommended)
+```
+
+Wired into three callbacks in `src/dbg/debugger.cpp`:
+
+| Callback | Stage | Behaviour |
+|---|---|---|
+| `cbCreateProcess` (line 1604) | ntdll not yet mapped | Runs PEB layer immediately so all the symbol-free hides go in early. |
+| `cbLoadDll` when modname == `ntdll.dll` (line 1961) | ntdll just loaded | Runs the Ex part — `valfromstring("ntdll:DbgBreakPoint")` now resolves. |
+| `cbAttachDebugger` (line 2273) | Attach | ntdll is already in the module list, so a single pass does everything. |
+
+If the INI keys are missing, `settingboolget()` writes them back with the default `true`, so the user can later flip either to `0` to opt out and the choice persists.
+
+### 3. Process / window / PE-resource rename
+
+Anti-cheat code commonly walks `CreateToolhelp32Snapshot` / `Process32Next` looking for the literal string `x64dbg.exe`, or calls `FindWindowW(NULL, L"x64dbg")` to spot the GUI. This fork renames every user-visible identifier:
+
+| Surface | Was | Now |
+|---|---|---|
+| Executable file name | `x64dbg.exe` / `x32dbg.exe` | `aclcwd.exe` (`cmake.toml:218-230`) |
+| PE version resource (`ProductName`, `FileDescription`) | `x64dbg` | `aclcwd` (`src/exe/resource.rc:78-82`) |
+| Qt `QCoreApplication::applicationName()` — drives main window title, taskbar caption, `QSettings` keys | `x64dbg` (Qt's default from `argv[0]`) | `aclcwd` (`src/gui/Src/main.cpp:172`) |
+
+User directory follows the new name too: settings now live in `%APPDATA%\aclcwd\aclcwd.ini`.
+
+DLLs (`x64dbg.dll`, `x64bridge.dll`, `x64gui.dll`) and the launcher `x96dbg.exe` keep their original names so the `bridgemain.cpp` LoadLibrary chain still works.
+
+### 4. Launch-time banner
+
+After the existing `Initialization successful!` line, the Log view now prints:
+
+```
+[AutoHide] Default ON  (AutoHideDebugger=1, AutoHideDebuggerEx=1)
+[AutoHide] PEB / DbgUiRemoteBreakin / DbgBreakPoint / ThreadHide will fire automatically when you start/attach a process.
+[AutoHide] Set [Misc] AutoHideDebuggerEx=0 in x64dbg.ini to disable.
+```
+
+…so you can tell at a glance whether the auto-hide is active.
+
+### Files changed (versus upstream)
+
+```
+cmake.toml                       (exe target rename)
+src/dbg/commands/cmd-misc.cpp    (HideDebuggerEx core, PatchToRet, HideAllThreadsFromDebugger, DebuggerAutoHideIfEnabled)
+src/dbg/commands/cmd-misc.h      (export new symbols)
+src/dbg/debugger.cpp             (auto-hide hooks at three callbacks)
+src/dbg/x64dbg.cpp               (register HideDebuggerEx, log banner)
+src/exe/resource.rc              (PE resource rename)
+src/gui/Src/main.cpp             (Qt applicationName)
+```
+
+A consolidated diff lives in `P1_P2_implementation.patch` at the project root. See `P1_P2_IMPLEMENTATION.md` and `ANTI_DETECT_GUIDE.md` for the full design rationale.
+
+### What this does **not** cover
+
+For completeness, the following anti-debug surfaces are out of scope for this fork. Pair with [ScyllaHide](https://github.com/x64dbg/ScyllaHide) if you need them:
+
+- `NtQueryInformationProcess` (ProcessDebugPort 0x07, ProcessDebugObjectHandle 0x1E, ProcessDebugFlags 0x1F) — user-mode hook
+- `NtQueryObject` DebugObject type detection
+- Kernel-mode probes that read `EPROCESS.DebugPort` directly (need DBVM / KsDumper)
+- INT3 (`0xCC`) byte scans of the debuggee's own code segments — use hardware breakpoints (`bph`) instead
+
+### Build
+
+Prerequisites: Visual Studio 2022 with the *Desktop development with C++* workload (provides MSVC, CMake, Ninja, Windows SDK). Then:
+
+```cmd
+git clone --recursive https://github.com/hkbinbin/x64dbg.git
+cd x64dbg
+build.bat all
+```
+
+The wrapper batch file calls `vcvars64.bat`, then runs CMake with the Ninja generator. Qt 5.12.12 is auto-downloaded on first configure. Final binary: `bin\x64\aclcwd.exe`.
+
+---
 
 ## Screenshots
 

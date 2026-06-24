@@ -475,6 +475,7 @@ static void registercommands()
     dbgcmdnew("zzz,doSleep", cbInstrZzz, false); //sleep
 
     dbgcmdnew("HideDebugger,dbh,hide", cbDebugHide, true); //HideDebugger
+    dbgcmdnew("HideDebuggerEx,dbhx,hideex", cbDebugHideEx, true); //HideDebuggerEx (P2)
     dbgcmdnew("loadlib", cbDebugLoadLib, true); //Load DLL
     dbgcmdnew("freelib", cbDebugFreeLib, true); //Unload DLL TODO: undocumented
     dbgcmdnew("asm", cbInstrAssemble, true); //assemble instruction
@@ -955,6 +956,20 @@ extern "C" DLL_EXPORT const char* _dbg_dbginit(bool blocking)
     pluginsetdirectory(plugindir);
     CreateDirectoryW(StringUtils::Utf8ToUtf16(StringUtils::sprintf("%s\\memdumps", szUserDir)).c_str(), nullptr);
     dputs(QT_TRANSLATE_NOOP("DBG", "Initialization successful!"));
+
+    // Force-on the anti-anti-debug auto-hide on first launch so users get a
+    // stealthed debugger out of the box. `settingboolget` returns the default
+    // (`true`) AND writes it to the INI when the key is missing, so the user
+    // can still flip these to 0 in <userdir>\x64dbg.ini under [Misc] to opt out.
+    {
+        bool ah = settingboolget("Misc", "AutoHideDebugger", true);
+        bool ahx = settingboolget("Misc", "AutoHideDebuggerEx", true);
+        dprintf(QT_TRANSLATE_NOOP("DBG", "[AutoHide] Default ON  (AutoHideDebugger=%d, AutoHideDebuggerEx=%d)\n"),
+                int(ah), int(ahx));
+        dputs(QT_TRANSLATE_NOOP("DBG", "[AutoHide] PEB / DbgUiRemoteBreakin / DbgBreakPoint / ThreadHide will fire automatically when you start/attach a process."));
+        dputs(QT_TRANSLATE_NOOP("DBG", "[AutoHide] Set [Misc] AutoHideDebuggerEx=0 in x64dbg.ini to disable."));
+    }
+
     bIsStopped = false;
     if(args.testing)
         dputs(QT_TRANSLATE_NOOP("DBG", "Testing mode enabled, skipping default plugin autoload..."));

@@ -1025,22 +1025,22 @@ set_target_properties(exe PROPERTIES
 if(CMAKE_SIZEOF_VOID_P EQUAL 4) # x86
 	set_target_properties(exe PROPERTIES
 		OUTPUT_NAME
-			x32dbg
+			aclcwd
 		ARCHIVE_OUTPUT_NAME
-			x32dbg_exe
+			aclcwd32_exe
 		PDB_NAME
-			x32dbg_exe
+			aclcwd32_exe
 	)
 endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8) # x64
 	set_target_properties(exe PROPERTIES
 		OUTPUT_NAME
-			x64dbg
+			aclcwd
 		ARCHIVE_OUTPUT_NAME
-			x64dbg_exe
+			aclcwd64_exe
 		PDB_NAME
-			x64dbg_exe
+			aclcwd64_exe
 	)
 endif()
 

@@ -359,6 +359,122 @@ bool cbDebugHide(int argc, char* argv[])
     return true;
 }
 
+//===========================================================================
+// P2 Anti-Anti-Debug additions:
+// - HideDebuggerEx (alias dbhx) — extended hide:
+//   1) PEB.BeingDebugged / NtGlobalFlag / HEAP_FLAGS  (re-uses HideDebuggerPebOnly)
+//   2) Patch ntdll!DbgUiRemoteBreakin -> int 3 ; ret  (defeat DebugBreakProcess)
+//   3) Patch ntdll!DbgBreakPoint -> ret              (defeat DebugBreak via remote thread)
+//   4) NtSetInformationThread(ThreadHideFromDebugger) on every known thread
+// - AutoHide hook for cbCreateProcess / cbAttachDebugger (P1)
+//===========================================================================
+
+// Replace the first byte at the resolved address with 0xC3 (ret) so that
+// any thread spawned at that entry will return immediately.
+static bool PatchToRet(const char* expr)
+{
+    duint addr = 0;
+    if(!valfromstring(expr, &addr, true))
+    {
+        dprintf(QT_TRANSLATE_NOOP("DBG", "[HideDebuggerEx] Failed to resolve %s\n"), expr);
+        return false;
+    }
+    unsigned char retByte = 0xC3;
+    if(!MemPatch(addr, &retByte, 1))
+    {
+        dprintf(QT_TRANSLATE_NOOP("DBG", "[HideDebuggerEx] Failed to patch %s @ %p\n"), expr, addr);
+        return false;
+    }
+    dprintf(QT_TRANSLATE_NOOP("DBG", "[HideDebuggerEx] Patched %s @ %p -> ret\n"), expr, addr);
+    return true;
+}
+
+// Apply ThreadHideFromDebugger to every known thread of the debuggee.
+// Returns the number of threads hidden.
+static int HideAllThreadsFromDebugger()
+{
+    std::vector<THREADINFO> threads;
+    ThreadGetList(threads);
+    int hidden = 0;
+    for(const auto & info : threads)
+    {
+        // info.Handle is the per-thread handle x64dbg already opened.
+        if(!info.Handle)
+            continue;
+        // ThreadHideFromDebugger == 0x11. Setting with 0-length info is a no-op
+        // for older OS; pass empty input which is the canonical usage.
+        NTSTATUS s = NtSetInformationThread(info.Handle,
+                                            ThreadHideFromDebugger,
+                                            nullptr,
+                                            0);
+        if(NT_SUCCESS(s))
+            hidden++;
+    }
+    return hidden;
+}
+
+static bool HideDebuggerExImpl()
+{
+    bool ok = HideDebuggerPebOnly(fdProcessInfo->hProcess);
+
+    // Patch DbgUiRemoteBreakin: any DebugBreakProcess injection now no-ops.
+    PatchToRet("ntdll:DbgUiRemoteBreakin");
+
+    // Patch DbgBreakPoint. Some anti-debug code calls this from a remote thread
+    // expecting an EXCEPTION_BREAKPOINT to be raised in our debug loop; turning
+    // it into a `ret` makes that probe silently disappear.
+    PatchToRet("ntdll:DbgBreakPoint");
+
+    int hidden = HideAllThreadsFromDebugger();
+    dprintf(QT_TRANSLATE_NOOP("DBG", "[HideDebuggerEx] %d thread(s) hidden from debugger\n"), hidden);
+
+    return ok;
+}
+
+bool cbDebugHideEx(int argc, char* argv[])
+{
+    if(HideDebuggerExImpl())
+        dputs(QT_TRANSLATE_NOOP("DBG", "Debugger hidden (extended)"));
+    else
+        dputs(QT_TRANSLATE_NOOP("DBG", "HideDebuggerEx encountered errors (see log)"));
+    return true;
+}
+
+// Called by debugger.cpp from cbCreateProcess / cbAttachDebugger when
+// the user has enabled Misc/AutoHideDebugger or Misc/AutoHideDebuggerEx.
+//
+// `ntdllReady` indicates whether ntdll.dll's exports are already resolvable
+// (true when called from cbAttachDebugger or cbLoadDll(ntdll), false from
+// the very first cbCreateProcess where only the EXE module is mapped).
+// PEB hide always runs regardless; the Ex (patch + ThreadHide) part is
+// skipped when ntdllReady is false and re-fires later via cbLoadDll(ntdll).
+//
+// NOTE: Both AutoHideDebugger and AutoHideDebuggerEx default to TRUE in this
+// fork so that simply launching x64dbg.exe gives the user a fully stealthed
+// debugger out of the box (no INI edit required). The user can still set
+// either to 0 in <userdir>\x64dbg.ini under [Misc] to opt out.
+void DebuggerAutoHideIfEnabled(bool ntdllReady)
+{
+    if(!fdProcessInfo || !fdProcessInfo->hProcess)
+        return;
+    bool ex = settingboolget("Misc", "AutoHideDebuggerEx", true);
+    bool basic = settingboolget("Misc", "AutoHideDebugger", true);
+    if(!ex && !basic)
+        return;
+
+    // PEB layer is always safe to apply.
+    if(HideDebuggerPebOnly(fdProcessInfo->hProcess))
+        dputs(QT_TRANSLATE_NOOP("DBG", "[AutoHide] PEB hide applied"));
+
+    if(ex && ntdllReady)
+    {
+        PatchToRet("ntdll:DbgUiRemoteBreakin");
+        PatchToRet("ntdll:DbgBreakPoint");
+        int hidden = HideAllThreadsFromDebugger();
+        dprintf(QT_TRANSLATE_NOOP("DBG", "[AutoHide] Extended hide applied; %d thread(s) hidden\n"), hidden);
+    }
+}
+
 static duint LoadLibThreadID;
 static duint FreeLibThreadID;
 static duint DLLNameMem;

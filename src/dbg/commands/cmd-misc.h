@@ -6,6 +6,8 @@ bool cbInstrChd(int argc, char* argv[]);
 bool cbInstrZzz(int argc, char* argv[]);
 
 bool cbDebugHide(int argc, char* argv[]);
+bool cbDebugHideEx(int argc, char* argv[]);
+void DebuggerAutoHideIfEnabled(bool ntdllReady = false);
 bool cbDebugLoadLib(int argc, char* argv[]);
 bool cbDebugFreeLib(int argc, char* argv[]);
 bool cbInstrAssemble(int argc, char* argv[]);

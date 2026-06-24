@@ -170,6 +170,15 @@ int main(int argc, char* argv[])
     handleHighDpiScaling();
     MyApplication application(argc, argv);
 
+    // Anti-anti-debug: override default app name (which Qt seeds from argv[0]
+    // = "x64dbg.exe"). This drives:
+    //   - QCoreApplication::applicationName() → MainWindow title bar
+    //   - QSettings org/app keys
+    //   - taskbar caption
+    // FindWindowW(NULL, L"x64dbg") and EnumWindows title scans miss this.
+    QCoreApplication::setApplicationName("aclcwd");
+    QCoreApplication::setOrganizationName("aclcwd");
+
 #if QT_VERSION < QT_VERSION_CHECK(5,0,0)
     QAbstractEventDispatcher::instance(application.thread())->setEventFilter(MyApplication::globalEventFilter);
 #else

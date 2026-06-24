@@ -41,3 +41,8 @@ CMakeUserPresets.json
 __pycache__/
 *.pyc
 *.egg-info/
+
+# WorkBuddy / build scratch
+.workbuddy/
+build64_*.log
+_dump_vcenv.bat

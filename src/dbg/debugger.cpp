@@ -29,6 +29,7 @@
 #include "simplescript.h"
 #include "zydis_wrapper.h"
 #include "cmd-watch-control.h"
+#include "commands/cmd-misc.h"
 #include "filemap.h"
 #include "jit.h"
 #include "handle.h"
@@ -1596,6 +1597,12 @@ static void cbCreateProcess(CREATE_PROCESS_DEBUG_INFO* CreateProcessInfo)
 
     hActiveThread = ThreadGetHandle(GetDebugData()->dwThreadId);
 
+    // P1: auto-hide debugger right after the debuggee process exists.
+    // Controlled by Misc/AutoHideDebugger or Misc/AutoHideDebuggerEx (default ON).
+    // ntdll is not yet in the module list at this point, so the Ex portion will
+    // re-fire from cbLoadDll once ntdll.dll loads.
+    DebuggerAutoHideIfEnabled(false);
+
     //call plugin callback
     PLUG_CB_CREATEPROCESS callbackInfo;
     callbackInfo.CreateProcessInfo = CreateProcessInfo;
@@ -1948,6 +1955,11 @@ static void cbLoadDll(LOAD_DLL_DEBUG_INFO* LoadDll)
     auto isNtdll = ModNameFromAddr(duint(base), modname, true) && scmp(modname, "ntdll.dll");
     if(isNtdll)
     {
+        // P1/P2: ntdll is now mapped; if the user opted into AutoHideDebuggerEx
+        // we can apply the extended hide (DbgUiRemoteBreakin/DbgBreakPoint patch
+        // + ThreadHideFromDebugger). PEB has already been hidden in cbCreateProcess.
+        DebuggerAutoHideIfEnabled(true);
+
         if(settingboolget("Misc", "QueryProcessCookie", false))
             cookie.HandleNtdllLoad(bIsAttached);
         if(settingboolget("Misc", "TransparentExceptionStepping", true))
@@ -2255,6 +2267,10 @@ static void cbAttachDebugger()
 
     dputs(QT_TRANSLATE_NOOP("DBG", "Attached to process!"));
     dbgsetskipexceptions(false); //we are not skipping first-chance exceptions
+
+    // P1: auto-hide debugger after attach if enabled (ntdll is already loaded
+    // at attach time, so the extended layer is available).
+    DebuggerAutoHideIfEnabled(true);
 }
 
 cmdline_qoutes_placement_t getqoutesplacement(const char* cmdline)

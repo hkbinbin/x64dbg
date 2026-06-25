@@ -7,6 +7,11 @@
 /bin/*.zip
 /bin/release-notes.md
 !/bin/themes/
+# Ship ScyllaHide v1.4 bundle so the fork works out of the box
+!/bin/x64/plugins/
+!/bin/x64/plugins/**
+!/bin/x32/plugins/
+!/bin/x32/plugins/**
 /src/**/x64/
 /src/**/Win32/
 /src/gui_build/

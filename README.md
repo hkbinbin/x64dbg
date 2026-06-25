@@ -83,14 +83,27 @@ src/gui/Src/main.cpp             (Qt applicationName)
 
 A consolidated diff lives in `P1_P2_implementation.patch` at the project root. See `P1_P2_IMPLEMENTATION.md` and `ANTI_DETECT_GUIDE.md` for the full design rationale.
 
-### What this does **not** cover
+### What this does **not** cover (and how we ship ScyllaHide to fill the gap)
 
-For completeness, the following anti-debug surfaces are out of scope for this fork. Pair with [ScyllaHide](https://github.com/x64dbg/ScyllaHide) if you need them:
+The built-in hide handles roughly 4 of the 20+ user-mode anti-debug surfaces catalogued in the [ScyllaHide v1.4 docs](https://github.com/x64dbg/ScyllaHide). To close the remaining user-mode gaps without re-implementing them, this fork **bundles ScyllaHide v1.4 as a bundled plugin** with a custom `AntiCheat Strong` profile pre-selected. See [`LIMITATIONS.md`](LIMITATIONS.md) for the full attack-surface audit.
 
-- `NtQueryInformationProcess` (ProcessDebugPort 0x07, ProcessDebugObjectHandle 0x1E, ProcessDebugFlags 0x1F) — user-mode hook
-- `NtQueryObject` DebugObject type detection
-- Kernel-mode probes that read `EPROCESS.DebugPort` directly (need DBVM / KsDumper)
-- INT3 (`0xCC`) byte scans of the debuggee's own code segments — use hardware breakpoints (`bph`) instead
+The plugin lives in `bin/x64/plugins/`:
+
+```
+ScyllaHideX64DBGPlugin.dp64   ; the plugin
+HookLibraryx64.dll            ; the per-process hook payload it injects
+scylla_hide.ini               ; profile config — defaults to AntiCheat Strong
+```
+
+The `AntiCheat Strong` profile (added at the end of `scylla_hide.ini`) turns on every user-mode hook relevant to game anti-cheat: `NtQueryInformationProcess` (ProcessDebugPort/Object/Flags), `NtQuerySystemInformation`, `NtQueryObject` (DebugObject scan), `NtSetInformationThread` (every call, not just once), `NtClose` invalid-handle, `NtGetContextThread`/`NtSetContextThread`/`KiUserExceptionDispatcher` (DR0-DR7 protection), `NtUserFindWindowEx`/`NtUserBuildHwndList`, all timing APIs (`GetTickCount`, `RDTSC` via `NtQueryPerformanceCounter`, etc.), and `OutputDebugString` forwarding.
+
+The plugin loads automatically at startup (no menu interaction required). You'll see it in the Log view alongside the `[AutoHide]` banner. To opt out, delete or rename the `bin/x64/plugins/` files, or pick the `Disabled` profile via *Plugins → ScyllaHide → Options*.
+
+### Still uncovered (need ring-0 or hypervisor)
+
+- **Kernel-mode probes** that read `EPROCESS.DebugPort` directly — needs [TitanHide](https://github.com/mrexodia/TitanHide) (signed driver, test-signing or EV cert required)
+- **INT3 (`0xCC`) byte scans** of the debuggee's own code — use hardware breakpoints (`bph`) instead, but ScyllaHide's DRx protection is needed too
+- **PE-content / code-segment hash signatures** (EAC 2026 kernel scanner, BattlEye, Vanguard) — pack with VMProtect/Themida or do ring-0
 
 ### Build
 
